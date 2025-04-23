@@ -95,4 +95,4 @@ if __name__ == "__main__":
     # Start background auto-control thread
     thread = threading.Thread(target=auto_fan_control, daemon=True)
     thread.start()
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5001)
