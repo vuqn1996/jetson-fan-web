@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect
+from flask import Flask, request, render_template_string
 import os
 import psutil
 import threading
@@ -6,8 +6,9 @@ import time
 
 app = Flask(__name__)
 PWM_PATH = "/sys/devices/pwm-fan/target_pwm"
-AUTO_MODE = False
+AUTO_MODE_FILE = "/tmp/auto_mode_flag"
 
+# ----- Utility Functions -----
 def read_fan_speed():
     try:
         with open(PWM_PATH, "r") as f:
@@ -34,9 +35,21 @@ def get_temperature():
     except:
         return -1
 
+# ----- Auto Mode Control -----
+def get_auto_mode():
+    return os.path.exists(AUTO_MODE_FILE)
+
+def set_auto_mode(enabled):
+    if enabled:
+        with open(AUTO_MODE_FILE, "w") as f:
+            f.write("1")
+    else:
+        if os.path.exists(AUTO_MODE_FILE):
+            os.remove(AUTO_MODE_FILE)
+
 def auto_fan_control():
     while True:
-        if AUTO_MODE:
+        if get_auto_mode():
             temp = get_temperature()
             if temp < 40:
                 pwm = 0
@@ -49,28 +62,41 @@ def auto_fan_control():
             write_fan_speed(pwm)
         time.sleep(5)
 
+# ----- Flask Routes -----
 @app.route("/", methods=["GET", "POST"])
 def index():
-    global AUTO_MODE
     message = ""
+    auto_mode = get_auto_mode()
+
     if request.method == "POST":
         if "set_speed" in request.form:
-            AUTO_MODE = False
+            set_auto_mode(False)
             speed = request.form.get("fan_speed")
             if write_fan_speed(speed):
                 message = f"Fan speed set to {speed}"
             else:
                 message = "Failed to set fan speed."
         elif "auto_mode" in request.form:
-            AUTO_MODE = not AUTO_MODE
-            message = f"Auto mode {'enabled' if AUTO_MODE else 'disabled'}."
+            auto_mode = not auto_mode
+            set_auto_mode(auto_mode)
+            message = f"Auto mode {'enabled' if auto_mode else 'disabled'}."
 
     fan_speed = read_fan_speed()
     temp = get_temperature()
 
     return render_template_string("""
     <html>
-    <head><title>Jetson Fan Dashboard</title></head>
+    <head>
+        <title>Jetson Fan Dashboard</title>
+        <script>
+            function autoRefresh() {
+                setTimeout(function() {
+                    location.reload();
+                }, 3000);
+            }
+            window.onload = autoRefresh;
+        </script>
+    </head>
     <body style="font-family:sans-serif;text-align:center;">
         <h1>Jetson Fan Control</h1>
         <p><strong>Temperature:</strong> {{ temp }} °C</p>
@@ -89,10 +115,10 @@ def index():
         <p style="color:green;">{{ message }}</p>
     </body>
     </html>
-    """, fan_speed=fan_speed, temp=temp, auto_mode=AUTO_MODE, message=message)
+    """, fan_speed=fan_speed, temp=temp, auto_mode=auto_mode, message=message)
 
+# ----- Start Background Thread & App -----
 if __name__ == "__main__":
-    # Start background auto-control thread
     thread = threading.Thread(target=auto_fan_control, daemon=True)
     thread.start()
     app.run(host="0.0.0.0", port=5001)
